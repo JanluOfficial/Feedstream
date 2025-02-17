@@ -25,18 +25,44 @@ class AddFeedDialog(QDialog):
         self.setMinimumWidth(300)
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
+        
         self.form_layout = QFormLayout()
         self.layout.addLayout(self.form_layout)
+        
         self.url_input = QLineEdit()
         self.form_layout.addRow('URL:', self.url_input)
+        
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText('Leave empty to use feed title')
         self.form_layout.addRow('Title:', self.title_input)
+        
+        # Add the "Set Proxy" button
+        self.proxy_button = QPushButton("Set Proxy")
+        self.proxy_button.clicked.connect(self.set_proxy)
+        self.layout.addWidget(self.proxy_button)
+        
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+        
         self.settings = SettingsManager.connect("feedstream.ini")
+    
+    def set_proxy(self):
+        dialog = EnterProxyDialog()
+        if dialog.exec_() == QDialog.Accepted:
+            proxy, port = dialog.get_proxy_details()
+
+            if not proxy or not port:
+                QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
+                return
+
+            proxy = proxy.replace("http://", "").replace("https://", "")
+            self.settings.set('proxy', 'proxy_address', proxy)
+            self.settings.set('proxy', 'proxy_port', port)
+            self.settings.commit()
+
+            QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
 
     def apply_stylesheet(self):
         stylesheet_path = self.get_default_stylesheet_path()
@@ -388,9 +414,6 @@ class Feedstream(QMainWindow):
         result = self.dbcursor.fetchall()
         if len(result) == 0:
             warning = QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
-            proxy_button = warning.addButton('Proxy Setup', QMessageBox.AcceptRole)
-            proxy_button.clicked.connect(self.set_proxy)
-            warning.exec_()
             self.add_feed()
             self.refresh_feed(feed_id=feed_id)
             return
@@ -598,8 +621,6 @@ class Feedstream(QMainWindow):
         else:
             return feedparser.parse(url)
 
-
-
     def set_proxy(self):
         dialog = EnterProxyDialog()
         if dialog.exec_() == QDialog.Accepted:
@@ -625,6 +646,7 @@ class Feedstream(QMainWindow):
                 QMessageBox.error('Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
                 return
             self.settings.set('proxy', 'use_proxy', enabled)
+            self.settings.commit()
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
