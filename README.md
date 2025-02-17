@@ -3,6 +3,8 @@
 
 An RSS Reader written with PyQt, inspired by Raven Software.
 
+![image](https://github.com/user-attachments/assets/48a1859b-0a79-464f-b3b0-9861ad1ca8d3)
+
 ## Installation
 See [Releases](https://github.com/JanluOfficial/Feedstream/releases/tag/release). Download the latest version for your platform. (Windows currently available)
 
