@@ -373,13 +373,14 @@ class Feedstream(QMainWindow):
                 feed_action.setShortcut(f'Ctrl+{i+1 if i < 9 else 0}')
                 self.feed_menu.addAction(feed_action)
 
-        self.more_feeds_menu = self.feed_menu.addMenu('More Feeds')
+        if len(feeds) > 10:
+            self.more_feeds_menu = self.feed_menu.addMenu('More Feeds')
 
-        for i, (feed_id, title) in enumerate(feeds):
-            if i >= 10:
-                feed_action = QAction(title, self)
-                feed_action.triggered.connect(lambda checked, fid=i: self.change_feed(fid))
-                self.more_feeds_menu.addAction(feed_action)
+            for i, (feed_id, title) in enumerate(feeds):
+                if i >= 10:
+                    feed_action = QAction(title, self)
+                    feed_action.triggered.connect(lambda checked, fid=i: self.change_feed(fid))
+                    self.more_feeds_menu.addAction(feed_action)
 
         self.feed_menu.addSeparator()
 
