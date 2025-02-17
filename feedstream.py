@@ -18,7 +18,7 @@ from settings_manager import SettingsManager
 
 
 class AddFeedDialog(QDialog):
-    def __init__(self):
+    def __init__(self, showProxyBtn: bool = False):
         super().__init__()
         self.apply_stylesheet()
         self.setWindowTitle('Add Feed')
@@ -36,10 +36,10 @@ class AddFeedDialog(QDialog):
         self.title_input.setPlaceholderText('Leave empty to use feed title')
         self.form_layout.addRow('Title:', self.title_input)
         
-        # Add the "Set Proxy" button
-        self.proxy_button = QPushButton("Set Proxy")
-        self.proxy_button.clicked.connect(self.set_proxy)
-        self.layout.addWidget(self.proxy_button)
+        if showProxyBtn:
+            self.proxy_button = QPushButton("Set Proxy")
+            self.proxy_button.clicked.connect(self.set_proxy)
+            self.layout.addWidget(self.proxy_button)
         
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
@@ -414,7 +414,7 @@ class Feedstream(QMainWindow):
         result = self.dbcursor.fetchall()
         if len(result) == 0:
             warning = QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
-            self.add_feed()
+            self.add_feed(True)
             self.refresh_feed(feed_id=feed_id)
             return
         elif result[feed_id]:
