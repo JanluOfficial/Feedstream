@@ -1,7 +1,3 @@
-/*
-    FileDiff Professional
-*/
-
 /* Text area */
 QTextEdit, QDialog QTextEdit {
     font-family: 'Cascadia Code', 'Courier New', Courier, monospace;
