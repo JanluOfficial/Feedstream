@@ -216,6 +216,7 @@ class EnterProxyDialog(QDialog):
 class Feedstream(QMainWindow):
     def __init__(self, feed):
         super().__init__()
+        self.settings = self.init_config()
         self.feed = feed
         self.setWindowTitle('Feedstream')
         self.setGeometry(100, 100, 960, 560)
@@ -228,7 +229,6 @@ class Feedstream(QMainWindow):
                 title TEXT
             )
         """)
-        self.settings = self.init_config()
         self.init_ui()
         self.feed_index = 0
         self.refresh_feed()
@@ -382,8 +382,8 @@ class Feedstream(QMainWindow):
             self.article_timestamp.setText(self.feed_list.item(selected_row, 3).text())
         self.show_article_details_pane()
 
-    def add_feed(self):
-        dialog = AddFeedDialog()
+    def add_feed(self, showProxyBtn: bool = False):
+        dialog = AddFeedDialog(showProxyBtn=showProxyBtn)
         if dialog.exec_() == QDialog.Accepted:
             url = dialog.url_input.text()
             title = dialog.title_input.text()
@@ -643,10 +643,12 @@ class Feedstream(QMainWindow):
 
         if proxy_address and proxy_port or not enabled:
             if (proxy_address == "" or proxy_port == "") and enabled: 
-                QMessageBox.error('Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
+                QMessageBox.critical(self, 'Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
                 return
             self.settings.set('proxy', 'use_proxy', enabled)
             self.settings.commit()
+        else:
+            QMessageBox.critical(self, 'Invalid Proxy Settings', 'No proxy has been set up so far. Proxy usage cannot be enabled.')
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
