@@ -5,13 +5,13 @@ import sqlite3
 import requests
 import feedparser
 import webbrowser
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QClipboard
+from PyQt5.QtCore import Qt #, QThread, pyqtSignal
+from PyQt5.QtGui import QFont #, QClipboard
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QAction, QWidget,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox, QSizePolicy,
-    QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel, QTextBrowser, QTabWidget, 
-    QProgressBar, QPushButton, QScrollArea, QCheckBox, QGroupBox
+    QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel,
+    QPushButton, QScrollArea
 )
 
 from settings_manager import SettingsManager
@@ -413,11 +413,11 @@ class Feedstream(QMainWindow):
         self.dbcursor.execute('SELECT url, title FROM feeds')
         result = self.dbcursor.fetchall()
         if len(result) == 0:
-            warning = QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
+            QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
             self.add_feed(True)
             self.refresh_feed(feed_id=feed_id)
             return
-        elif result[feed_id]:
+        elif 0 <= feed_id < len(result):
             print("Loading feed", result[feed_id][0])
             feed_url = result[feed_id][0]
             feed = self.parse_feed(feed_url)
