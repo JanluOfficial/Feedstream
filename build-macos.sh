@@ -1,1 +1,1 @@
-nuitka --onefile --standalone --enable-plugin=pyqt5 --remove-output --include-data-files=style.css=style.css --macos-create-app-bundle --output-dir=dist feedstream.py
+nuitka --onefile --standalone --enable-plugin=pyqt5 --remove-output --include-data-files=style.qss=style.qss --macos-create-app-bundle --output-dir=dist feedstream.py
