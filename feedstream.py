@@ -4,13 +4,18 @@ import time
 import sqlite3
 import feedparser
 import webbrowser
+import configparser
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QClipboard
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QAction, QWidget,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox, QSizePolicy,
-    QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel, QTextBrowser, QTabWidget, QProgressBar, QPushButton, QScrollArea
+    QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel, QTextBrowser, QTabWidget, 
+    QProgressBar, QPushButton, QScrollArea, QCheckBox, QGroupBox
 )
+
+from settings_manager import SettingsManager
+
 
 class AddFeedDialog(QDialog):
     def __init__(self):
@@ -31,6 +36,7 @@ class AddFeedDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+        self.settings = SettingsManager.connect("feedstream.ini")
 
     def apply_stylesheet(self):
         stylesheet_path = self.get_default_stylesheet_path()
@@ -46,6 +52,11 @@ class AddFeedDialog(QDialog):
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(__file__)
+
+        custom_path = os.path.join(base_path, 'custom_style.qss')
+        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
+            return custom_path
+        
         return os.path.join(base_path, 'style.qss')
 
 class ManageFeedDialog(QDialog):
@@ -68,6 +79,7 @@ class ManageFeedDialog(QDialog):
         self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
         self.layout.addWidget(self.feed_list)
         self.load_feeds()
+        self.settings = SettingsManager.connect("feedstream.ini")
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.delete_button = QPushButton('Delete')
@@ -116,6 +128,11 @@ class ManageFeedDialog(QDialog):
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(__file__)
+
+        custom_path = os.path.join(base_path, 'custom_style.qss')
+        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
+            return custom_path
+        
         return os.path.join(base_path, 'style.qss')
 
 class Feedstream(QMainWindow):
@@ -133,6 +150,7 @@ class Feedstream(QMainWindow):
                 title TEXT
             )
         """)
+        self.settings = self.init_config()
         self.init_ui()
         self.feed_index = 0
         self.refresh_feed()
@@ -152,17 +170,23 @@ class Feedstream(QMainWindow):
 
         view_menu = self.menu_bar.addMenu('View')
         show_url_action = QAction('Show URL', self, checkable=True)
-        show_url_action.setChecked(False)
-        show_url_action.triggered.connect(lambda: self.hide_column(1, show_url_action))
+        show_url_action.setChecked(self.settings.getboolean('TableView', 'show_url', False))
+        show_url_action.triggered.connect(lambda: self.hide_column(1, show_url_action, "show_url"))
         view_menu.addAction(show_url_action)
         show_summary_action = QAction('Show Summary', self, checkable=True)
-        show_summary_action.setChecked(False)
-        show_summary_action.triggered.connect(lambda: self.hide_column(2, show_summary_action))
+        show_summary_action.setChecked(self.settings.getboolean('TableView', 'show_summary', False))
+        show_summary_action.triggered.connect(lambda: self.hide_column(2, show_summary_action, "show_summary"))
         view_menu.addAction(show_summary_action)
         show_timestamp_action = QAction('Show Timestamp', self, checkable=True)
-        show_timestamp_action.setChecked(True)
-        show_timestamp_action.triggered.connect(lambda: self.hide_column(3, show_timestamp_action))
+        show_timestamp_action.setChecked(self.settings.getboolean('TableView', 'show_timestamp', True))
+        show_timestamp_action.triggered.connect(lambda: self.hide_column(3, show_timestamp_action, "show_timestamp"))
         view_menu.addAction(show_timestamp_action)
+
+        # options_menu = self.menu_bar.addMenu('Options')
+        # open_settings_action = QAction('Open Settings', self)
+        # open_settings_action.setShortcut("Crtl+O")
+        # open_settings_action.triggered.connect(self.open_setings)
+        # options_menu.addAction(open_settings_action)
 
         # Main UI
         self.splitter = QSplitter(Qt.Horizontal)
@@ -187,8 +211,9 @@ class Feedstream(QMainWindow):
         self.feed_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.feed_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.feed_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.feed_list.horizontalHeader().setSectionHidden(1, True)
-        self.feed_list.horizontalHeader().setSectionHidden(2, True)
+        self.feed_list.horizontalHeader().setSectionHidden(1, not self.settings.getboolean('TableView', 'show_url', True))
+        self.feed_list.horizontalHeader().setSectionHidden(2, not self.settings.getboolean('TableView', 'show_summary', True))
+        self.feed_list.horizontalHeader().setSectionHidden(3, not self.settings.getboolean('TableView', 'show_timestamp', False))
         self.feed_list.verticalHeader().setVisible(False)
         self.feed_list.cellDoubleClicked.connect(self.open_url)
         self.feed_list.cellClicked.connect(self.set_article_details)
@@ -196,6 +221,7 @@ class Feedstream(QMainWindow):
         self.feed_list.setSelectionBehavior(QTableWidget.SelectRows)
         self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
         feed_list_layout.addWidget(self.feed_list)
+
 
         # Article Details Pane
         self.article_widget = QWidget()
@@ -252,6 +278,11 @@ class Feedstream(QMainWindow):
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(__file__)
+
+        custom_path = os.path.join(base_path, 'custom_style.qss')
+        if os.path.exists(custom_path) and self.settings.getboolean('UI', 'custom_theming'):
+            return custom_path
+        
         return os.path.join(base_path, 'style.qss')
     
     def show_article_details_pane(self):
@@ -274,7 +305,7 @@ class Feedstream(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             url = dialog.url_input.text()
             title = dialog.title_input.text()
-            feed = feedparser.parse(url)
+            feed = self.parse_feed(url)
             if hasattr(feed, "status"):
                 if feed.status == 429:
                     QMessageBox.warning(self, 'Too Many Requests', 'You have made too many requests to the server. Please try again later.')
@@ -307,7 +338,7 @@ class Feedstream(QMainWindow):
         elif result[feed_id]:
             print("Loading feed", result[feed_id][0])
             feed_url = result[feed_id][0]
-            feed = feedparser.parse(feed_url)
+            feed = self.parse_feed(feed_url)
             if hasattr(feed, "status"):
                 if feed.status == 429:
                     retry = QMessageBox.warning(self, 'Too Many Requests', f'You have made too many requests to {result[feed_id][1]}. Please try again later.', QMessageBox.Retry | QMessageBox.Cancel)
@@ -342,6 +373,11 @@ class Feedstream(QMainWindow):
         dialog = ManageFeedDialog()
         dialog.exec_()
         self.build_feeds_menu()
+
+    # def open_setings(self):
+    #     dialog = SettingsDialog()
+    #     dialog.exec_()
+    #     self.build_feeds_menu()
 
     def build_feeds_menu(self):
         for action in self.feed_menu.actions():
@@ -393,8 +429,61 @@ class Feedstream(QMainWindow):
         url = self.feed_list.item(row, 1).text()
         webbrowser.open(url)
 
-    def hide_column(self, column, action):
+    def hide_column(self, column, action, setting: str=None):
         self.feed_list.setColumnHidden(column, not action.isChecked())
+        if setting:
+            self.settings.set('TableView', setting, action.isChecked())
+            print(f"Set '{setting}' to {action.isChecked()}")
+            self.settings.commit()
+
+    def init_config(self):
+        settings = SettingsManager.connect("feedstream.ini")
+
+        # Categories
+        if not settings.config.has_section('TableView'):
+            settings.config.add_section('TableView')
+            print("Created section 'TableView'.")
+        else:
+            print("Section 'TableView' already exists.")
+
+        if not settings.config.has_section('UI'):
+            settings.config.add_section('UI')
+            print("Created section 'UI'.")
+        else:
+            print("Section 'UI' already exists.")
+
+        # Options
+        # TableView
+        if not settings.config.has_option('TableView', 'show_url'):
+            settings.set('TableView', 'show_url', False)
+            print("Option 'show_url' set to False.")
+        else:
+            print("Option 'show_url' already exists. Skipping.")
+
+        if not settings.config.has_option('TableView', 'show_summary'):
+            settings.set('TableView', 'show_summary', False)
+            print("Option 'show_summary' set to False.")
+        else:
+            print("Option 'show_summary' already exists. Skipping.")
+
+        if not settings.config.has_option('TableView', 'show_timestamp'):
+            settings.set('TableView', 'show_timestamp', True)
+            print("Option 'show_timestamp' set to False.")
+        else:
+            print("Option 'show_timestamp' already exists. Skipping.")
+
+        # UI
+        if not settings.config.has_option('UI', 'custom_theming'):
+            settings.set('UI', 'custom_theming', True)
+            print("Option 'custom_theming' set to False.")
+        else:
+            print("Option 'custom_theming' already exists. Skipping.")
+
+        settings.commit()
+        return settings
+
+    def parse_feed(self, url):
+        return feedparser.parse(url)
         
 
 if __name__ == '__main__':

@@ -266,6 +266,10 @@ QSplitter::handle {
 }
 
 /* Table */
+QTableView {
+    background: transparent;
+}
+
 QTableView::item:selected {
     background-color: #0c0c0c;
     color: white;
