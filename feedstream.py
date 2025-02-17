@@ -2,9 +2,9 @@ import os
 import sys
 import time
 import sqlite3
+import requests
 import feedparser
 import webbrowser
-import configparser
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QClipboard
 from PyQt5.QtWidgets import (
@@ -135,6 +135,58 @@ class ManageFeedDialog(QDialog):
         
         return os.path.join(base_path, 'style.qss')
 
+class EnterProxyDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.apply_stylesheet()
+        self.setWindowTitle('Proxy Setup')
+        self.setMinimumWidth(300)
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+        
+        self.form_layout = QFormLayout()
+        self.layout.addLayout(self.form_layout)
+
+        self.proxy_input = QLineEdit()
+        self.proxy_input.setPlaceholderText('Enter proxy address (e.g., http://proxy.example.com)')
+        self.form_layout.addRow('Proxy:', self.proxy_input)
+
+        self.port_input = QLineEdit()
+        self.port_input.setPlaceholderText('Enter proxy port (e.g., 8080)')
+        self.form_layout.addRow('Port:', self.port_input)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        self.layout.addWidget(self.button_box)
+
+        # Settings for customization (if needed)
+        self.settings = SettingsManager.connect("feedstream.ini")
+
+    def apply_stylesheet(self):
+        stylesheet_path = self.get_default_stylesheet_path()
+        try:
+            with open(stylesheet_path, 'r') as file:
+                stylesheet = file.read()
+                self.setStyleSheet(stylesheet)
+        except Exception as e:
+            QMessageBox.warning(self, "Style Error", f"Failed to apply stylesheet: {e}")
+
+    def get_default_stylesheet_path(self):
+        if hasattr(sys, 'frozen'):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(__file__)
+
+        custom_path = os.path.join(base_path, 'custom_style.qss')
+        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
+            return custom_path
+        
+        return os.path.join(base_path, 'style.qss')
+
+    def get_proxy_details(self):
+        return self.proxy_input.text(), self.port_input.text()
+
 class Feedstream(QMainWindow):
     def __init__(self, feed):
         super().__init__()
@@ -182,11 +234,15 @@ class Feedstream(QMainWindow):
         show_timestamp_action.triggered.connect(lambda: self.hide_column(3, show_timestamp_action, "show_timestamp"))
         view_menu.addAction(show_timestamp_action)
 
-        # options_menu = self.menu_bar.addMenu('Options')
-        # open_settings_action = QAction('Open Settings', self)
-        # open_settings_action.setShortcut("Crtl+O")
-        # open_settings_action.triggered.connect(self.open_setings)
-        # options_menu.addAction(open_settings_action)
+        options_menu = self.menu_bar.addMenu('Options')
+        proxy_menu = options_menu.addMenu('Proxy')
+        self.use_proxy_checkable = QAction("Use Proxy", self, checkable=True)
+        self.use_proxy_checkable.setChecked(self.settings.getboolean('proxy', 'use_proxy'))
+        self.use_proxy_checkable.triggered.connect(lambda: self.set_proxy_usage(self.use_proxy_checkable.isChecked()))
+        proxy_menu.addAction(self.use_proxy_checkable)
+        set_up_proxy_action = QAction("Set up Proxy", self)
+        set_up_proxy_action.triggered.connect(self.set_proxy)
+        proxy_menu.addAction(set_up_proxy_action)
 
         # Main UI
         self.splitter = QSplitter(Qt.Horizontal)
@@ -331,7 +387,10 @@ class Feedstream(QMainWindow):
         self.dbcursor.execute('SELECT url, title FROM feeds')
         result = self.dbcursor.fetchall()
         if len(result) == 0:
-            QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
+            warning = QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
+            proxy_button = warning.addButton('Proxy Setup', QMessageBox.AcceptRole)
+            proxy_button.clicked.connect(self.set_proxy)
+            warning.exec_()
             self.add_feed()
             self.refresh_feed(feed_id=feed_id)
             return
@@ -436,6 +495,12 @@ class Feedstream(QMainWindow):
             print(f"Set '{setting}' to {action.isChecked()}")
             self.settings.commit()
 
+    def toggle_setting(self, category: str, setting: str):
+        current = self.settings.getboolean(category, setting)
+        self.settings.set(category, setting, not current)
+        print(f"Set '{setting}' in '{category}' to {not current}")
+        self.settings.commit()
+
     def init_config(self):
         settings = SettingsManager.connect("feedstream.ini")
 
@@ -451,6 +516,12 @@ class Feedstream(QMainWindow):
             print("Created section 'UI'.")
         else:
             print("Section 'UI' already exists.")
+
+        if not settings.config.has_section('proxy'):
+            settings.config.add_section('proxy')
+            print("Created section 'proxy'.")
+        else:
+            print("Section 'proxy' already exists.")
 
         # Options
         # TableView
@@ -479,13 +550,82 @@ class Feedstream(QMainWindow):
         else:
             print("Option 'custom_theming' already exists. Skipping.")
 
+        # Proxy
+        if not settings.config.has_option('proxy', 'use_proxy'):
+            settings.set('proxy', 'use_proxy', False)
+            print("Option 'use_proxy' set to False.")
+        else:
+            print("Option 'use_proxy' already exists. Skipping.")
+
+        if not settings.config.has_option('proxy', 'proxy_address'):
+            settings.set('proxy', 'proxy_address', "")
+            print("Option 'proxy_address' set to \"\".")
+        else:
+            print("Option 'proxy_address' already exists. Skipping.")
+
+        if not settings.config.has_option('proxy', 'proxy_port'):
+            settings.set('proxy', 'proxy_port', "")
+            print("Option 'proxy_port' set to \"\".")
+        else:
+            print("Option 'proxy_port' already exists. Skipping.")
+
         settings.commit()
         return settings
 
     def parse_feed(self, url):
-        return feedparser.parse(url)
-        
+        use_proxy = self.settings.getboolean('proxy', 'use_proxy', fallback=False)
+        proxy_address = self.settings.get('proxy', 'proxy_address', fallback="")
+        proxy_port = self.settings.get('proxy', 'proxy_port', fallback="")
 
+        if use_proxy and proxy_address and proxy_port:
+            print(f"Using proxy {proxy_address}:{proxy_port}")
+            proxies = {
+                'http': f'http://{proxy_address}:{proxy_port}',
+                'https': f'http://{proxy_address}:{proxy_port}',
+            }
+            try:
+                response = requests.get(url, proxies=proxies, timeout=10)
+                response.raise_for_status()
+                return feedparser.parse(response.text)
+            except requests.exceptions.ProxyError:
+                QMessageBox.warning(self, 'Proxy Error', 'The proxy failed to connect. It has been disabled.')
+                self.set_proxy_usage(False)
+                self.use_proxy_checkable.setChecked(self.settings.getboolean('proxy', 'use_proxy'))
+                return self.parse_feed(url)
+            except requests.RequestException as e:
+                QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
+                return None
+        else:
+            return feedparser.parse(url)
+
+
+
+    def set_proxy(self):
+        dialog = EnterProxyDialog()
+        if dialog.exec_() == QDialog.Accepted:
+            proxy, port = dialog.get_proxy_details()
+
+            if not proxy or not port:
+                QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
+                return
+
+            proxy = proxy.replace("http://", "").replace("https://", "")
+            self.settings.set('proxy', 'proxy_address', proxy)
+            self.settings.set('proxy', 'proxy_port', port)
+            self.settings.commit()
+
+            QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
+
+    def set_proxy_usage(self, enabled: bool):
+        proxy_address = self.settings.get('proxy', 'proxy_address', fallback=None)
+        proxy_port = self.settings.get('proxy', 'proxy_port', fallback=None)
+
+        if proxy_address and proxy_port or not enabled:
+            if (proxy_address == "" or proxy_port == "") and enabled: 
+                QMessageBox.error('Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
+                return
+            self.settings.set('proxy', 'use_proxy', enabled)
+        
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     feedstream = Feedstream(None)
