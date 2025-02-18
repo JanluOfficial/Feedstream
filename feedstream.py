@@ -591,7 +591,8 @@ class Feedstream(QMainWindow, StylesheetMixin):
         http_port = self.settings.get('proxy', 'http_proxy_port', fallback="")
         https_address = self.settings.get('proxy', 'https_proxy_address', fallback="")
         https_port = self.settings.get('proxy', 'https_proxy_port', fallback="")
-    
+
+        proxies = None
         if use_proxy and http_address and http_port:
             http_proxy = f"http://{http_address}:{http_port}"
             # Use HTTPS proxy if both address and port are provided; otherwise, fall back to HTTP proxy.
@@ -599,31 +600,32 @@ class Feedstream(QMainWindow, StylesheetMixin):
                 https_proxy = f"http://{https_address}:{https_port}"
             else:
                 https_proxy = http_proxy
-    
+
             print(f"Using proxies - HTTP: {http_proxy}, HTTPS: {https_proxy}")
             proxies = {
                 'http': http_proxy,
                 'https': https_proxy
             }
-            try:
-                response = requests.get(url, proxies=proxies, timeout=10)
-                response.raise_for_status()
-                return feedparser.parse(response.text)
-            except requests.exceptions.ProxyError:
-                QMessageBox.warning(self, 'Proxy Error', 'The proxy failed to connect. It has been disabled.')
-                self.set_proxy_usage(False)
-                return self.parse_feed(url)
-            except requests.RequestException as e:
+
+        # Set a custom User-Agent header to mimic a browser.
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36'
+        }
+
+        try:
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=10)
+            response.raise_for_status()
+            return feedparser.parse(response.text)
+        except requests.RequestException as e:
+            # If it's a 403 error (or another issue) with the requests method, fall back.
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
+                print("Received 403 error using requests; falling back to feedparser's native URL fetching.")
+                return feedparser.parse(url)
+            else:
                 QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
                 return None
-        else:
-            try:
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                return feedparser.parse(response.text)
-            except requests.RequestException as e:
-                QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
-                return None
+
 
 
     def set_proxy(self):
