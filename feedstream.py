@@ -19,6 +19,7 @@ from StylesheetMixin import StylesheetMixin
 
 class GlobConf:
     database = "feedstream.db"
+    config = "feedstream.ini"
 
 class AddFeedDialog(QDialog, StylesheetMixin):
     def __init__(self, showProxyBtn: bool = False):
@@ -49,7 +50,7 @@ class AddFeedDialog(QDialog, StylesheetMixin):
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
         
-        self.settings = SettingsManager.connect("feedstream.ini")
+        self.settings = SettingsManager.connect(GlobConf.config)
     
     def set_proxy(self):
         EnterProxyDialog(self.settings)
@@ -75,7 +76,7 @@ class ManageFeedDialog(QDialog, StylesheetMixin):
         self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
         self.layout.addWidget(self.feed_list)
         self.load_feeds()
-        self.settings = SettingsManager.connect("feedstream.ini")
+        self.settings = SettingsManager.connect(GlobConf.config)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.delete_button = QPushButton('Delete')
@@ -354,11 +355,17 @@ class Feedstream(QMainWindow, StylesheetMixin):
                     if retry == QMessageBox.Retry:
                         self.refresh_feed(feed_id)
                     return
+                elif feed.status == 403:
+                    retry = QMessageBox.critical(self, 'Client Error', f'The server has responded with <b>403: Forbidden</b> and denied access to this feed.', QMessageBox.Retry | QMessageBox.Cancel)
+                    if retry == QMessageBox.Retry:
+                        self.refresh_feed(feed_id)
+                    return
             self.display_feed(feed, result[feed_id][1])
 
     def display_feed(self, feed, title):
         if not feed or not title:
-            QMessageBox.critical(self, 'Critical Error', 'Failed while refreshing: Feed or Title were NULL')
+            QMessageBox.critical(self, 'Critical Error', 'Failed while refreshing: Feed or Title were set to None')
+            return
         self.feed_list_label.setText(title)
         self.feed_list.setRowCount(len(feed.entries))
         for i, entry in enumerate(feed.entries):
@@ -455,7 +462,7 @@ class Feedstream(QMainWindow, StylesheetMixin):
         self.settings.commit()
 
     def init_config(self):
-        settings = SettingsManager.connect("feedstream.ini")
+        settings = SettingsManager.connect(GlobConf.config)
 
         # Categories
         if not settings.config.has_section('TableView'):
