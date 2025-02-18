@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QAction, QWidget,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox, QSizePolicy,
     QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel,
-    QPushButton, QScrollArea
+    QPushButton, QScrollArea, QCheckBox
 )
 
 from settings_manager import SettingsManager
@@ -113,47 +113,92 @@ class EnterProxyDialog(QDialog, StylesheetMixin):
         super().__init__()
         self.settings = settings
         self.apply_stylesheet()
-        self.setWindowTitle('Proxy Setup')
+        self.setWindowTitle("Proxy Setup")
         self.setMinimumWidth(300)
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        
+
+        self.layout = QVBoxLayout(self)
+
         self.form_layout = QFormLayout()
         self.layout.addLayout(self.form_layout)
 
-        self.proxy_input = QLineEdit()
-        self.proxy_input.setPlaceholderText('Enter proxy address (e.g., http://proxy.example.com)')
-        self.form_layout.addRow('Proxy:', self.proxy_input)
+        self.http_layout = QHBoxLayout()
+        self.http_address_input = QLineEdit()
+        self.http_address_input.setPlaceholderText("e.g., http://proxy.example.com")
+        self.http_port_input = QLineEdit()
+        self.http_port_input.setPlaceholderText("Port (e.g., 8080)")
+        self.http_port_input.setValidator(QIntValidator(1, 65535, self))
+        self.http_layout.addWidget(self.http_address_input)
+        self.http_layout.addWidget(self.http_port_input)
+        self.form_layout.addRow("HTTP Proxy:", self.http_layout)
 
-        self.port_input = QLineEdit()
-        self.port_input.setPlaceholderText('Enter proxy port (e.g., 8080)')
-        self.port_input.setValidator(QIntValidator(1, 65535, self))
-        self.form_layout.addRow('Port:', self.port_input)
+        self.use_http_for_https_check = QCheckBox("Use HTTP proxy for HTTPS")
+        self.use_http_for_https_check.setChecked(False)
+        self.use_http_for_https_check.stateChanged.connect(self.update_https_fields)
+        self.layout.addWidget(self.use_http_for_https_check)
+
+        self.https_layout = QHBoxLayout()
+        self.https_address_input = QLineEdit()
+        self.https_address_input.setPlaceholderText("e.g., https://proxy.example.com")
+        self.https_port_input = QLineEdit()
+        self.https_port_input.setPlaceholderText("Port (e.g., 443)")
+        self.https_port_input.setValidator(QIntValidator(1, 65535, self))
+        self.https_layout.addWidget(self.https_address_input)
+        self.https_layout.addWidget(self.https_port_input)
+        self.form_layout.addRow("HTTPS Proxy:", self.https_layout)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.set_proxy)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+        self.update_https_fields()
+
+    def update_https_fields(self):
+        """Enable or disable HTTPS fields based on the checkbox state."""
+        use_http_for_https = self.use_http_for_https_check.isChecked()
+        self.https_address_input.setDisabled(use_http_for_https)
+        self.https_port_input.setDisabled(use_http_for_https)
+        if use_http_for_https:
+            self.https_address_input.setText(self.http_address_input.text())
+            self.https_port_input.setText(self.http_port_input.text())
 
     def set_proxy(self):
-        proxy, port = self.proxy_input.text().strip(), self.port_input.text().strip()
+        """Validate inputs, save settings, and close the dialog."""
+        http_address = self.http_address_input.text().strip()
+        http_port = self.http_port_input.text().strip()
 
-        if not proxy or not port:
-            QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
+        if self.use_http_for_https_check.isChecked():
+            https_address = http_address
+            https_port = http_port
+        else:
+            https_address = self.https_address_input.text().strip()
+            https_port = self.https_port_input.text().strip()
+
+        if not http_address or not http_port:
+            QMessageBox.warning(self, "Invalid Input", "Both HTTP proxy address and port must be provided.")
             return
 
-        proxy = proxy.replace("http://", "").replace("https://", "")
-        
+        if not https_address or not https_port:
+            QMessageBox.warning(self, "Invalid Input", "Both HTTPS proxy address and port must be provided.")
+            return
+
         try:
-            self.settings.set('proxy', 'proxy_address', proxy)
-            self.settings.set('proxy', 'proxy_port', port)
+            self.settings.set("proxy", "http_proxy_address", http_address)
+            self.settings.set("proxy", "http_proxy_port", http_port)
+            self.settings.set("proxy", "https_proxy_address", https_address)
+            self.settings.set("proxy", "https_proxy_port", https_port)
+            self.settings.set("proxy", "use_http_for_https", self.use_http_for_https_check.isChecked())
             self.settings.commit()
         except Exception as e:
-            QMessageBox.critical(self, 'Error', f'Failed to save proxy settings: {e}')
+            QMessageBox.critical(self, "Error", f"Failed to save proxy settings: {e}")
             return
-        
-        QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
+
+        QMessageBox.information(
+            self,
+            "Proxy Set",
+            f"HTTP Proxy: {http_address}:{http_port}\nHTTPS Proxy: {https_address}:{https_port}"
+        )
         self.accept()
+
 
 class Feedstream(QMainWindow, StylesheetMixin):
     def __init__(self, feed):
@@ -513,31 +558,52 @@ class Feedstream(QMainWindow, StylesheetMixin):
         else:
             print("Option 'use_proxy' already exists. Skipping.")
 
-        if not settings.config.has_option('proxy', 'proxy_address'):
-            settings.set('proxy', 'proxy_address', "")
-            print("Option 'proxy_address' set to \"\".")
+        if not settings.config.has_option('proxy', 'http_proxy_address'):
+            settings.set('proxy', 'http_proxy_address', "")
+            print('Option "http_proxy_address" set to "".')
         else:
-            print("Option 'proxy_address' already exists. Skipping.")
+            print("Option 'http_proxy_address' already exists. Skipping.")
 
-        if not settings.config.has_option('proxy', 'proxy_port'):
-            settings.set('proxy', 'proxy_port', "")
-            print("Option 'proxy_port' set to \"\".")
+        if not settings.config.has_option('proxy', 'https_proxy_address'):
+            settings.set('proxy', 'https_proxy_address', "")
+            print('Option "https_proxy_address" set to "".')
         else:
-            print("Option 'proxy_port' already exists. Skipping.")
+            print("Option 'https_proxy_address' already exists. Skipping.")
+
+        if not settings.config.has_option('proxy', 'http_proxy_port'):
+            settings.set('proxy', 'http_proxyports', "")
+            print('Option "http_proxy_port" set to "".')
+        else:
+            print("Option 'http_proxy_port' already exists. Skipping.")
+
+        if not settings.config.has_option('proxy', 'https_proxy_port'):
+            settings.set('proxy', 'https_proxy_port', "")
+            print('Option "https_proxy_port" set to "".')
+        else:
+            print("Option 'https_proxy_port' already exists. Skipping.")
 
         settings.commit()
         return settings
 
     def parse_feed(self, url):
         use_proxy = self.settings.getboolean('proxy', 'use_proxy', fallback=False)
-        proxy_address = self.settings.get('proxy', 'proxy_address', fallback="")
-        proxy_port = self.settings.get('proxy', 'proxy_port', fallback="")
-
-        if use_proxy and proxy_address and proxy_port:
-            print(f"Using proxy {proxy_address}:{proxy_port}")
+        http_address = self.settings.get('proxy', 'http_proxy_address', fallback="")
+        http_port = self.settings.get('proxy', 'http_proxy_port', fallback="")
+        https_address = self.settings.get('proxy', 'https_proxy_address', fallback="")
+        https_port = self.settings.get('proxy', 'https_proxy_port', fallback="")
+    
+        if use_proxy and http_address and http_port:
+            http_proxy = f"http://{http_address}:{http_port}"
+            # Use HTTPS proxy if both address and port are provided; otherwise, fall back to HTTP proxy.
+            if https_address and https_port:
+                https_proxy = f"http://{https_address}:{https_port}"
+            else:
+                https_proxy = http_proxy
+    
+            print(f"Using proxies - HTTP: {http_proxy}, HTTPS: {https_proxy}")
             proxies = {
-                'http': f'http://{proxy_address}:{proxy_port}',
-                'https': f'http://{proxy_address}:{proxy_port}',
+                'http': http_proxy,
+                'https': https_proxy
             }
             try:
                 response = requests.get(url, proxies=proxies, timeout=10)
@@ -551,20 +617,31 @@ class Feedstream(QMainWindow, StylesheetMixin):
                 QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
                 return None
         else:
-            return feedparser.parse(url)
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return feedparser.parse(response.text)
+            except requests.RequestException as e:
+                QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
+                return None
+
 
     def set_proxy(self):
         EnterProxyDialog(self.settings).exec_()
 
     def set_proxy_usage(self, enabled: bool):
-        if enabled and (not self.settings.get('proxy', 'proxy_address') or not self.settings.get('proxy', 'proxy_port')):
-            QMessageBox.critical(self, 'Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
+        http_address = self.settings.get('proxy', 'http_proxy_address', fallback="")
+        http_port = self.settings.get('proxy', 'http_proxy_port', fallback="")
+
+        if enabled and (not http_address or not http_port):
+            QMessageBox.critical(self, 'Invalid Proxy Settings', 'No valid HTTP proxy set. Proxy usage cannot be enabled.')
             self.use_proxy_checkable.setChecked(False)
             return
+
         self.settings.set('proxy', 'use_proxy', enabled)
         self.use_proxy_checkable.setChecked(enabled)
         self.settings.commit()
-        
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     feedstream = Feedstream(None)
