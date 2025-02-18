@@ -6,7 +6,7 @@ import requests
 import feedparser
 import webbrowser
 from PyQt5.QtCore import Qt #, QThread, pyqtSignal
-from PyQt5.QtGui import QFont #, QClipboard
+from PyQt5.QtGui import QFont, QIntValidator #, QClipboard
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QAction, QWidget,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox, QSizePolicy,
@@ -15,9 +15,12 @@ from PyQt5.QtWidgets import (
 )
 
 from settings_manager import SettingsManager
+from StylesheetMixin import StylesheetMixin
 
+class GlobConf:
+    database = "feedstream.db"
 
-class AddFeedDialog(QDialog):
+class AddFeedDialog(QDialog, StylesheetMixin):
     def __init__(self, showProxyBtn: bool = False):
         super().__init__()
         self.apply_stylesheet()
@@ -49,46 +52,13 @@ class AddFeedDialog(QDialog):
         self.settings = SettingsManager.connect("feedstream.ini")
     
     def set_proxy(self):
-        dialog = EnterProxyDialog()
-        if dialog.exec_() == QDialog.Accepted:
-            proxy, port = dialog.get_proxy_details()
+        EnterProxyDialog(self.settings)
 
-            if not proxy or not port:
-                QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
-                return
-
-            proxy = proxy.replace("http://", "").replace("https://", "")
-            self.settings.set('proxy', 'proxy_address', proxy)
-            self.settings.set('proxy', 'proxy_port', port)
-            self.settings.commit()
-
-            QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
-
-    def apply_stylesheet(self):
-        stylesheet_path = self.get_default_stylesheet_path()
-        try:
-            with open(stylesheet_path, 'r') as file:
-                stylesheet = file.read()
-                self.setStyleSheet(stylesheet)
-        except Exception as e:
-            QMessageBox.warning(self, "Style Error", f"Failed to apply stylesheet: {e}")
-
-    def get_default_stylesheet_path(self):
-        if hasattr(sys, 'frozen'):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(__file__)
-
-        custom_path = os.path.join(base_path, 'custom_style.qss')
-        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
-            return custom_path
-        
-        return os.path.join(base_path, 'style.qss')
-
-class ManageFeedDialog(QDialog):
+class ManageFeedDialog(QDialog, StylesheetMixin):
     def __init__(self):
         super().__init__()
         self.apply_stylesheet()
+        self.database = GlobConf.database
         self.setWindowTitle('Manage Feeds')
         self.setMinimumSize(480, 640)
         self.layout = QVBoxLayout()
@@ -117,53 +87,30 @@ class ManageFeedDialog(QDialog):
 
     def load_feeds(self):
         self.feed_list.setRowCount(0)
-        db = sqlite3.connect('feedstream.db')
-        cursor = db.cursor()
-        cursor.execute('SELECT title, url FROM feeds')
-        feeds = cursor.fetchall()
-        for i, (title, url) in enumerate(feeds):
-            self.feed_list.insertRow(i)
-            self.feed_list.setItem(i, 0, QTableWidgetItem(title))
-            self.feed_list.setItem(i, 1, QTableWidgetItem(url))
-        db.close()
+        with sqlite3.connect(self.database) as db:
+            cursor = db.cursor()
+            cursor.execute('SELECT title, url FROM feeds')
+            feeds = cursor.fetchall()
+            for i, (title, url) in enumerate(feeds):
+                self.feed_list.insertRow(i)
+                self.feed_list.setItem(i, 0, QTableWidgetItem(title))
+                self.feed_list.setItem(i, 1, QTableWidgetItem(url))
 
     def delete_feed(self):
         selected_row = self.feed_list.currentRow()
         confirm = QMessageBox.question(self, 'Delete Feed', 'Are you sure you want to delete this feed?', QMessageBox.Yes | QMessageBox.No)
         if selected_row >= 0 and confirm == QMessageBox.Yes:
             title = self.feed_list.item(selected_row, 0).text()
-            db = sqlite3.connect('feedstream.db')
-            cursor = db.cursor()
-            cursor.execute('DELETE FROM feeds WHERE title = ?', (title,))
-            db.commit()
-            db.close()
+            with sqlite3.connect(self.database) as db:
+                cursor = db.cursor()
+                cursor.execute('DELETE FROM feeds WHERE title = ?', (title,))
+                db.commit()
             self.feed_list.removeRow(selected_row)
 
-
-    def apply_stylesheet(self):
-        stylesheet_path = self.get_default_stylesheet_path()
-        try:
-            with open(stylesheet_path, 'r') as file:
-                stylesheet = file.read()
-                self.setStyleSheet(stylesheet)
-        except Exception as e:
-            QMessageBox.warning(self, "Style Error", f"Failed to apply stylesheet: {e}")
-
-    def get_default_stylesheet_path(self):
-        if hasattr(sys, 'frozen'):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(__file__)
-
-        custom_path = os.path.join(base_path, 'custom_style.qss')
-        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
-            return custom_path
-        
-        return os.path.join(base_path, 'style.qss')
-
-class EnterProxyDialog(QDialog):
-    def __init__(self):
+class EnterProxyDialog(QDialog, StylesheetMixin):
+    def __init__(self, settings):
         super().__init__()
+        self.settings = settings
         self.apply_stylesheet()
         self.setWindowTitle('Proxy Setup')
         self.setMinimumWidth(300)
@@ -179,56 +126,52 @@ class EnterProxyDialog(QDialog):
 
         self.port_input = QLineEdit()
         self.port_input.setPlaceholderText('Enter proxy port (e.g., 8080)')
+        self.port_input.setValidator(QIntValidator(1, 65535, self))
         self.form_layout.addRow('Port:', self.port_input)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.button_box.accepted.connect(self.accept)
+        self.button_box.accepted.connect(self.set_proxy)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
 
-        # Settings for customization (if needed)
-        self.settings = SettingsManager.connect("feedstream.ini")
+    def set_proxy(self):
+        proxy, port = self.proxy_input.text().strip(), self.port_input.text().strip()
 
-    def apply_stylesheet(self):
-        stylesheet_path = self.get_default_stylesheet_path()
-        try:
-            with open(stylesheet_path, 'r') as file:
-                stylesheet = file.read()
-                self.setStyleSheet(stylesheet)
-        except Exception as e:
-            QMessageBox.warning(self, "Style Error", f"Failed to apply stylesheet: {e}")
+        if not proxy or not port:
+            QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
+            return
 
-    def get_default_stylesheet_path(self):
-        if hasattr(sys, 'frozen'):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(__file__)
-
-        custom_path = os.path.join(base_path, 'custom_style.qss')
-        if os.path.exists(custom_path) and self.settings.get('UI', 'custom_theming'):
-            return custom_path
+        proxy = proxy.replace("http://", "").replace("https://", "")
         
-        return os.path.join(base_path, 'style.qss')
+        try:
+            self.settings.set('proxy', 'proxy_address', proxy)
+            self.settings.set('proxy', 'proxy_port', port)
+            self.settings.commit()
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Failed to save proxy settings: {e}')
+            return
+        
+        QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
+        self.accept()
 
-    def get_proxy_details(self):
-        return self.proxy_input.text(), self.port_input.text()
-
-class Feedstream(QMainWindow):
+class Feedstream(QMainWindow, StylesheetMixin):
     def __init__(self, feed):
         super().__init__()
         self.settings = self.init_config()
         self.feed = feed
         self.setWindowTitle('Feedstream')
         self.setGeometry(100, 100, 960, 560)
-        self.database = sqlite3.connect('feedstream.db')
-        self.dbcursor = self.database.cursor()
-        self.dbcursor.execute("""
-            CREATE TABLE IF NOT EXISTS feeds (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                url TEXT UNIQUE, 
-                title TEXT
-            )
-        """)
+        self.database = GlobConf.database
+        with sqlite3.connect(self.database) as db:
+            cursor = db.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS feeds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    url TEXT UNIQUE, 
+                    title TEXT
+                )
+            """)
+            db.commit()
         self.init_ui()
         self.feed_index = 0
         self.refresh_feed()
@@ -304,7 +247,6 @@ class Feedstream(QMainWindow):
         self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
         feed_list_layout.addWidget(self.feed_list)
 
-
         # Article Details Pane
         self.article_widget = QWidget()
         article_layout = QVBoxLayout(self.article_widget)
@@ -345,27 +287,6 @@ class Feedstream(QMainWindow):
         self.article_details_pane.setMinimumWidth(300)
         self.article_details_pane.setWidget(self.article_widget)
         self.article_details_pane.setWidgetResizable(True)
-
-    def apply_stylesheet(self):
-        stylesheet_path = self.get_default_stylesheet_path()
-        try:
-            with open(stylesheet_path, 'r') as file:
-                stylesheet = file.read()
-                self.setStyleSheet(stylesheet)
-        except Exception as e:
-            QMessageBox.warning(self, "Style Error", f"Failed to apply stylesheet: {e}")
-
-    def get_default_stylesheet_path(self):
-        if hasattr(sys, 'frozen'):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(__file__)
-
-        custom_path = os.path.join(base_path, 'custom_style.qss')
-        if os.path.exists(custom_path) and self.settings.getboolean('UI', 'custom_theming'):
-            return custom_path
-        
-        return os.path.join(base_path, 'style.qss')
     
     def show_article_details_pane(self):
         if self.article_details_pane not in self.splitter.children():
@@ -401,23 +322,29 @@ class Feedstream(QMainWindow):
             self.build_feeds_menu()
 
     def add_feed_to_database(self, url: str, title: str = None):
-        try:
-            self.dbcursor.execute('INSERT INTO feeds (url, title) VALUES (?, ?)', (url, title))
-            self.database.commit()
-        except sqlite3.IntegrityError:
-            QMessageBox.warning(self, 'Feed Exists', 'Feed already exists in database')
+        with sqlite3.connect(self.database) as db:
+            try:
+                db.cursor().execute('INSERT INTO feeds (url, title) VALUES (?, ?)', (url, title))
+                db.commit()
+            except sqlite3.IntegrityError:
+                QMessageBox.warning(self, 'Feed Exists', 'Feed already exists in database')
 
     def refresh_feed(self, feed_id: int = None):
         if feed_id is None:
             feed_id = self.feed_index
-        self.dbcursor.execute('SELECT url, title FROM feeds')
-        result = self.dbcursor.fetchall()
-        if len(result) == 0:
+        with sqlite3.connect(self.database) as db:
+            cursor = db.cursor()
+            cursor.execute('SELECT url, title FROM feeds')
+            result = cursor.fetchall()
+        
+        while len(result) == 0:
             QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
             self.add_feed(True)
-            self.refresh_feed(feed_id=feed_id)
-            return
-        elif 0 <= feed_id < len(result):
+            with sqlite3.connect(self.database) as db:
+                cursor = db.cursor()
+                cursor.execute('SELECT url, title FROM feeds')
+                result = cursor.fetchall()
+        if 0 <= feed_id < len(result):
             print("Loading feed", result[feed_id][0])
             feed_url = result[feed_id][0]
             feed = self.parse_feed(feed_url)
@@ -430,6 +357,8 @@ class Feedstream(QMainWindow):
             self.display_feed(feed, result[feed_id][1])
 
     def display_feed(self, feed, title):
+        if not feed or not title:
+            QMessageBox.critical(self, 'Critical Error', 'Failed while refreshing: Feed or Title were NULL')
         self.feed_list_label.setText(title)
         self.feed_list.setRowCount(len(feed.entries))
         for i, entry in enumerate(feed.entries):
@@ -462,8 +391,7 @@ class Feedstream(QMainWindow):
     #     self.build_feeds_menu()
 
     def build_feeds_menu(self):
-        for action in self.feed_menu.actions():
-            # if action.text() == "More Feeds": continue
+        for action in list(self.feed_menu.actions()):
             self.feed_menu.removeAction(action)
 
         add_feed_action = QAction('Add Feed', self)
@@ -477,8 +405,10 @@ class Feedstream(QMainWindow):
 
         self.feed_menu.addSeparator()
         
-        self.dbcursor.execute('SELECT id, title FROM feeds')
-        feeds = self.dbcursor.fetchall()
+        with sqlite3.connect(self.database) as db:
+            cursor = db.cursor()
+            cursor.execute('SELECT id, title FROM feeds')
+            feeds = cursor.fetchall()
 
         if hasattr(self, 'more_feeds_menu'):
             self.more_feeds_menu.deleteLater()
@@ -562,14 +492,14 @@ class Feedstream(QMainWindow):
 
         if not settings.config.has_option('TableView', 'show_timestamp'):
             settings.set('TableView', 'show_timestamp', True)
-            print("Option 'show_timestamp' set to False.")
+            print("Option 'show_timestamp' set to True.")
         else:
             print("Option 'show_timestamp' already exists. Skipping.")
 
         # UI
         if not settings.config.has_option('UI', 'custom_theming'):
             settings.set('UI', 'custom_theming', True)
-            print("Option 'custom_theming' set to False.")
+            print("Option 'custom_theming' set to True.")
         else:
             print("Option 'custom_theming' already exists. Skipping.")
 
@@ -613,7 +543,6 @@ class Feedstream(QMainWindow):
             except requests.exceptions.ProxyError:
                 QMessageBox.warning(self, 'Proxy Error', 'The proxy failed to connect. It has been disabled.')
                 self.set_proxy_usage(False)
-                self.use_proxy_checkable.setChecked(self.settings.getboolean('proxy', 'use_proxy'))
                 return self.parse_feed(url)
             except requests.RequestException as e:
                 QMessageBox.warning(self, 'Network Error', f'Failed to fetch feed: {e}')
@@ -622,33 +551,16 @@ class Feedstream(QMainWindow):
             return feedparser.parse(url)
 
     def set_proxy(self):
-        dialog = EnterProxyDialog()
-        if dialog.exec_() == QDialog.Accepted:
-            proxy, port = dialog.get_proxy_details()
-
-            if not proxy or not port:
-                QMessageBox.warning(self, 'Invalid Input', 'Both proxy address and port must be provided.')
-                return
-
-            proxy = proxy.replace("http://", "").replace("https://", "")
-            self.settings.set('proxy', 'proxy_address', proxy)
-            self.settings.set('proxy', 'proxy_port', port)
-            self.settings.commit()
-
-            QMessageBox.information(self, 'Proxy Set', f'Proxy has been set to {proxy}:{port}')
+        EnterProxyDialog(self.settings).exec_()
 
     def set_proxy_usage(self, enabled: bool):
-        proxy_address = self.settings.get('proxy', 'proxy_address', fallback=None)
-        proxy_port = self.settings.get('proxy', 'proxy_port', fallback=None)
-
-        if proxy_address and proxy_port or not enabled:
-            if (proxy_address == "" or proxy_port == "") and enabled: 
-                QMessageBox.critical(self, 'Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
-                return
-            self.settings.set('proxy', 'use_proxy', enabled)
-            self.settings.commit()
-        else:
-            QMessageBox.critical(self, 'Invalid Proxy Settings', 'No proxy has been set up so far. Proxy usage cannot be enabled.')
+        if enabled and (not self.settings.get('proxy', 'proxy_address') or not self.settings.get('proxy', 'proxy_port')):
+            QMessageBox.critical(self, 'Invalid Proxy Settings', 'No valid proxy set. Proxy usage cannot be enabled.')
+            self.use_proxy_checkable.setChecked(False)
+            return
+        self.settings.set('proxy', 'use_proxy', enabled)
+        self.use_proxy_checkable.setChecked(enabled)
+        self.settings.commit()
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
