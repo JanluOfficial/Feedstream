@@ -349,18 +349,14 @@ class Feedstream(QMainWindow, StylesheetMixin):
             print("Loading feed", result[feed_id][0])
             feed_url = result[feed_id][0]
             feed = self.parse_feed(feed_url)
-            if hasattr(feed, "status"):
-                if feed.status == 429:
-                    retry = QMessageBox.warning(self, 'Too Many Requests', f'You have made too many requests to {result[feed_id][1]}. Please try again later.', QMessageBox.Retry | QMessageBox.Cancel)
-                    if retry == QMessageBox.Retry:
-                        self.refresh_feed(feed_id)
-                    return
-                elif feed.status == 403:
-                    retry = QMessageBox.critical(self, 'Client Error', f'The server has responded with <b>403: Forbidden</b> and denied access to this feed.', QMessageBox.Retry | QMessageBox.Cancel)
-                    if retry == QMessageBox.Retry:
-                        self.refresh_feed(feed_id)
-                    return
-            self.display_feed(feed, result[feed_id][1])
+            if feed:
+                if hasattr(feed, "status"):
+                    if feed.status == 429:
+                        retry = QMessageBox.warning(self, 'Too Many Requests', f'You have made too many requests to {result[feed_id][1]}. Please try again later.', QMessageBox.Retry | QMessageBox.Cancel)
+                        if retry == QMessageBox.Retry:
+                            self.refresh_feed(feed_id)
+                        return
+                self.display_feed(feed, result[feed_id][1])
 
     def display_feed(self, feed, title):
         if not feed or not title:
