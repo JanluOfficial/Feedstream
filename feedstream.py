@@ -1,4 +1,3 @@
-import os
 import sys
 import time
 import sqlite3
@@ -6,12 +5,12 @@ import requests
 import feedparser
 import webbrowser
 from PyQt5.QtCore import Qt #, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QIntValidator #, QClipboard
+from PyQt5.QtGui import QFont, QIntValidator, QTextDocument #, QClipboard
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QAction, QWidget,
     QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox, QSizePolicy,
     QTableWidget, QHeaderView, QSplitter, QTableWidgetItem, QLabel,
-    QPushButton, QScrollArea, QCheckBox
+    QPushButton, QScrollArea, QCheckBox, QTextBrowser, QComboBox
 )
 
 from settings_manager import SettingsManager
@@ -21,6 +20,18 @@ class GlobConf:
     database = "feedstream.db"
     config = "feedstream.ini"
 
+class MDFeedDisplay(QTextBrowser):
+    def __init__(self):
+        super().__init__()
+        self.setOpenExternalLinks(False)
+        self.anchorClicked.connect(self.handle_link_click)
+
+    def handle_link_click(self, url):
+        webbrowser.open(url.toString())
+
+    def setSource(self, url, type=QTextDocument.UnknownResource):
+        print(f"Blocked navigation to: {url.toString()}")
+
 class AddFeedDialog(QDialog, StylesheetMixin):
     def __init__(self, showProxyBtn: bool = False):
         super().__init__()
@@ -29,22 +40,26 @@ class AddFeedDialog(QDialog, StylesheetMixin):
         self.setMinimumWidth(300)
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
-        
+
         self.form_layout = QFormLayout()
         self.layout.addLayout(self.form_layout)
-        
+
         self.url_input = QLineEdit()
         self.form_layout.addRow('URL:', self.url_input)
-        
+
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText('Leave empty to use feed title')
         self.form_layout.addRow('Title:', self.title_input)
-        
+
+        self.feed_type_combo = QComboBox()
+        self.feed_type_combo.addItems(['RSS/Atom', 'Markdown'])
+        self.form_layout.addRow('Feed Type:', self.feed_type_combo)
+
         if showProxyBtn:
             self.proxy_button = QPushButton("Set Proxy")
             self.proxy_button.clicked.connect(self.set_proxy)
             self.layout.addWidget(self.proxy_button)
-        
+
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
@@ -66,15 +81,15 @@ class ManageFeedDialog(QDialog, StylesheetMixin):
         self.setLayout(self.layout)
         self.form_layout = QFormLayout()
         self.layout.addLayout(self.form_layout)
-        self.feed_list = QTableWidget()
-        self.feed_list.setColumnCount(2)
-        self.feed_list.setHorizontalHeaderLabels(['Title', 'URL'])
-        self.feed_list.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.feed_list.verticalHeader().setVisible(False)
-        self.feed_list.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.feed_list.setSelectionBehavior(QTableWidget.SelectRows)
-        self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
-        self.layout.addWidget(self.feed_list)
+        self.rss_feed_table = QTableWidget()
+        self.rss_feed_table.setColumnCount(2)
+        self.rss_feed_table.setHorizontalHeaderLabels(['Title', 'URL'])
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.rss_feed_table.verticalHeader().setVisible(False)
+        self.rss_feed_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.rss_feed_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.rss_feed_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.layout.addWidget(self.rss_feed_table)
         self.load_feeds()
         self.settings = SettingsManager.connect(GlobConf.config)
 
@@ -87,26 +102,26 @@ class ManageFeedDialog(QDialog, StylesheetMixin):
         self.layout.addWidget(self.button_box)
 
     def load_feeds(self):
-        self.feed_list.setRowCount(0)
+        self.rss_feed_table.setRowCount(0)
         with sqlite3.connect(self.database) as db:
             cursor = db.cursor()
             cursor.execute('SELECT title, url FROM feeds')
             feeds = cursor.fetchall()
             for i, (title, url) in enumerate(feeds):
-                self.feed_list.insertRow(i)
-                self.feed_list.setItem(i, 0, QTableWidgetItem(title))
-                self.feed_list.setItem(i, 1, QTableWidgetItem(url))
+                self.rss_feed_table.insertRow(i)
+                self.rss_feed_table.setItem(i, 0, QTableWidgetItem(title))
+                self.rss_feed_table.setItem(i, 1, QTableWidgetItem(url))
 
     def delete_feed(self):
-        selected_row = self.feed_list.currentRow()
+        selected_row = self.rss_feed_table.currentRow()
         confirm = QMessageBox.question(self, 'Delete Feed', 'Are you sure you want to delete this feed?', QMessageBox.Yes | QMessageBox.No)
         if selected_row >= 0 and confirm == QMessageBox.Yes:
-            title = self.feed_list.item(selected_row, 0).text()
+            title = self.rss_feed_table.item(selected_row, 0).text()
             with sqlite3.connect(self.database) as db:
                 cursor = db.cursor()
                 cursor.execute('DELETE FROM feeds WHERE title = ?', (title,))
                 db.commit()
-            self.feed_list.removeRow(selected_row)
+            self.rss_feed_table.removeRow(selected_row)
 
 class EnterProxyDialog(QDialog, StylesheetMixin):
     def __init__(self, settings):
@@ -214,9 +229,28 @@ class Feedstream(QMainWindow, StylesheetMixin):
                 CREATE TABLE IF NOT EXISTS feeds (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, 
                     url TEXT UNIQUE, 
-                    title TEXT
+                    title TEXT,
+                    type VARCHAR(3) DEFAULT 'rss'
                 )
             """)
+
+            cursor.execute("PRAGMA table_info(feeds)")
+            columns = cursor.fetchall()
+
+            type_column_exists = False
+            for column in columns:
+                if column[1] == "type":
+                    type_column_exists = True
+                    break
+
+            # Add the 'type' column if it doesn't exist
+            if not type_column_exists:
+                cursor.execute("ALTER TABLE feeds ADD COLUMN type TEXT DEFAULT 'rss'")
+                db.commit()
+                print("Added 'type' column to 'feeds' table.")
+            else:
+                print("'type' column already exists in 'feeds' table.")
+
             db.commit()
         self.init_ui()
         self.feed_index = 0
@@ -269,30 +303,39 @@ class Feedstream(QMainWindow, StylesheetMixin):
         feed_list_widget.setLayout(feed_list_layout)
         self.splitter.addWidget(feed_list_widget)
 
-        self.feed_list_label = QLabel('Feeds')
-        self.feed_list_label.setFont(QFont('Arial', 20))
-        feed_list_layout.addWidget(self.feed_list_label)
+        self.feed_label = QLabel('Feeds')
+        self.feed_label.setFont(QFont('Arial', 20))
+        feed_list_layout.addWidget(self.feed_label)
 
-        self.feed_list = QTableWidget()
-        self.feed_list.setMinimumSize(600, 200)
-        self.feed_list.setColumnCount(4)
-        self.feed_list.setHorizontalHeaderLabels(['Title', 'URL', 'Summary', 'Published'])
-        self.feed_list.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.feed_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.feed_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.feed_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.feed_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.feed_list.horizontalHeader().setSectionHidden(1, not self.settings.getboolean('TableView', 'show_url', True))
-        self.feed_list.horizontalHeader().setSectionHidden(2, not self.settings.getboolean('TableView', 'show_summary', True))
-        self.feed_list.horizontalHeader().setSectionHidden(3, not self.settings.getboolean('TableView', 'show_timestamp', False))
-        self.feed_list.verticalHeader().setVisible(False)
-        self.feed_list.cellDoubleClicked.connect(self.open_url)
-        self.feed_list.cellClicked.connect(self.set_article_details)
-        self.feed_list.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.feed_list.setSelectionBehavior(QTableWidget.SelectRows)
-        self.feed_list.setSelectionMode(QTableWidget.SingleSelection)
-        feed_list_layout.addWidget(self.feed_list)
+        self.rss_feed_table = QTableWidget()
+        self.rss_feed_table.setMinimumSize(600, 200)
+        self.rss_feed_table.setColumnCount(4)
+        self.rss_feed_table.setHorizontalHeaderLabels(['Title', 'URL', 'Summary', 'Published'])
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.rss_feed_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.rss_feed_table.horizontalHeader().setSectionHidden(1, not self.settings.getboolean('TableView', 'show_url', True))
+        self.rss_feed_table.horizontalHeader().setSectionHidden(2, not self.settings.getboolean('TableView', 'show_summary', True))
+        self.rss_feed_table.horizontalHeader().setSectionHidden(3, not self.settings.getboolean('TableView', 'show_timestamp', False))
+        self.rss_feed_table.verticalHeader().setVisible(False)
+        self.rss_feed_table.cellDoubleClicked.connect(self.open_url)
+        self.rss_feed_table.cellClicked.connect(self.set_article_details)
+        self.rss_feed_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.rss_feed_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.rss_feed_table.setSelectionMode(QTableWidget.SingleSelection)
+        feed_list_layout.addWidget(self.rss_feed_table)
 
+        self.md_feed_display = MDFeedDisplay()
+        self.md_feed_display.setReadOnly(True)
+        self.md_feed_display.setMarkdown("# Markdown Feed will go here")
+        self.main_layout.addWidget(self.md_feed_display)
+        self.md_feed_display.hide()
+        self.md_feed_display.setFont(QFont("Arial"))
+        self.md_feed_display.setOpenExternalLinks(False)
+        self.md_feed_display.anchorClicked.connect(self.open_link)
+        
         # Article Details Pane
         self.article_widget = QWidget()
         article_layout = QVBoxLayout(self.article_widget)
@@ -317,7 +360,7 @@ class Feedstream(QMainWindow, StylesheetMixin):
 
         article_url_options = QHBoxLayout()
         open_in_browser = QPushButton("Open in Browser")
-        open_in_browser.clicked.connect(lambda: webbrowser.open(self.article_url.text()))
+        open_in_browser.clicked.connect(lambda: self.open_link(self.article_url.text()))
         article_url_options.addWidget(open_in_browser)
         copy_to_clipboard = QPushButton("Copy to Clipboard")
         copy_to_clipboard.clicked.connect(lambda: QApplication.clipboard().setText(self.article_url.text()))
@@ -341,12 +384,12 @@ class Feedstream(QMainWindow, StylesheetMixin):
             self.splitter.setStretchFactor(1, 1)
 
     def set_article_details(self):
-        selected_row = self.feed_list.currentRow()
+        selected_row = self.rss_feed_table.currentRow()
         if selected_row >= 0:
-            self.article_title.setText(self.feed_list.item(selected_row, 0).text())
-            self.article_summary.setText(self.feed_list.item(selected_row, 2).text())
-            self.article_url.setText(self.feed_list.item(selected_row, 1).text())
-            self.article_timestamp.setText(self.feed_list.item(selected_row, 3).text())
+            self.article_title.setText(self.rss_feed_table.item(selected_row, 0).text())
+            self.article_summary.setText(self.rss_feed_table.item(selected_row, 2).text())
+            self.article_url.setText(self.rss_feed_table.item(selected_row, 1).text())
+            self.article_timestamp.setText(self.rss_feed_table.item(selected_row, 3).text())
         self.show_article_details_pane()
 
     def add_feed(self, showProxyBtn: bool = False):
@@ -354,23 +397,68 @@ class Feedstream(QMainWindow, StylesheetMixin):
         if dialog.exec_() == QDialog.Accepted:
             url = dialog.url_input.text()
             title = dialog.title_input.text()
-            feed = self.parse_feed(url)
+            feed_type = "rss" if dialog.feed_type_combo.currentText == "RSS/Atom" else "md"
+            feed = self.parse_feed(url, feed_type)
+
             if hasattr(feed, "status"):
                 if feed.status == 429:
                     QMessageBox.warning(self, 'Too Many Requests', 'You have made too many requests to the server. Please try again later.')
                     return
-            if feed.bozo:
-                QMessageBox.warning(self, 'Invalid Feed', 'The URL does not link to a valid RSS feed.')
-                return
-            elif title == '':
-                title = feed.feed.title
-            self.add_feed_to_database(url, title)
+            if hasattr(feed, "entries"): #if the feed has entries, it is an rss feed.
+                if feed.bozo:
+                    QMessageBox.warning(self, 'Invalid Feed', 'The URL does not link to a valid RSS feed.')
+                    return
+                elif title == '':
+                    title = feed.feed.title
+            else:
+                feed = self.parse_feed(url, "md") #if it doesnt have entries, try to parse it as markdown.
+                if feed:
+                    feed_type = "md"
+                    if title == '':
+                        title = "Markdown Feed" #sets a default title if none is provided.
+                else:
+                    QMessageBox.warning(self, 'Invalid Feed', 'The URL does not link to a valid RSS or Markdown feed.')
+                    return
+
+            self.add_feed_to_database(url, title, feed_type)
+            self.build_feeds_menu()
+            
+    def add_feed(self, showProxyBtn: bool = False):
+        dialog = AddFeedDialog(showProxyBtn=showProxyBtn)
+        if dialog.exec_() == QDialog.Accepted:
+            url = dialog.url_input.text()
+            title = dialog.title_input.text()
+            feed = self.parse_feed(url, "rss")
+            feed_type = "rss" if dialog.feed_type_combo.currentText == "RSS/Atom" else "md"
+
+            if feed_type == "rss":
+                if hasattr(feed, "status"):
+                    if feed.status == 429:
+                        QMessageBox.warning(self, 'Too Many Requests', 'You have made too many requests to the server. Please try again later.')
+                        return
+                if hasattr(feed, "entries"):
+                    if feed.bozo:
+                        QMessageBox.warning(self, 'Invalid Feed', 'The URL does not link to a valid RSS feed.')
+                        return
+                    elif title == '':
+                        title = feed.feed.title
+            else:
+                feed = self.parse_feed(url, "md")
+                if feed:
+                    feed_type = "md"
+                    if title == '':
+                        title = "Markdown Feed"
+                else:
+                    QMessageBox.warning(self, 'Invalid Feed', 'The URL does not link to a valid RSS or Markdown feed.')
+                    return
+
+            self.add_feed_to_database(url, title, feed_type)
             self.build_feeds_menu()
 
-    def add_feed_to_database(self, url: str, title: str = None):
-        with sqlite3.connect(self.database) as db:
+    def add_feed_to_database(self, url: str, title: str = None, feed_type: str = "rss"):
+        with sqlite3.connect("feedstream.db") as db:
             try:
-                db.cursor().execute('INSERT INTO feeds (url, title) VALUES (?, ?)', (url, title))
+                db.cursor().execute('INSERT INTO feeds (url, title, type) VALUES (?, ?, ?)', (url, title, feed_type))
                 db.commit()
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, 'Feed Exists', 'Feed already exists in database')
@@ -380,49 +468,68 @@ class Feedstream(QMainWindow, StylesheetMixin):
             feed_id = self.feed_index
         with sqlite3.connect(self.database) as db:
             cursor = db.cursor()
-            cursor.execute('SELECT url, title FROM feeds')
+            cursor.execute('SELECT url, title, type FROM feeds')
             result = cursor.fetchall()
-        
+
         while len(result) == 0:
             QMessageBox.warning(self, 'No Feeds found', 'You must first add a feed to refresh')
             self.add_feed(True)
             with sqlite3.connect(self.database) as db:
                 cursor = db.cursor()
-                cursor.execute('SELECT url, title FROM feeds')
+                cursor.execute('SELECT url, title, type FROM feeds')
                 result = cursor.fetchall()
         if 0 <= feed_id < len(result):
             print("Loading feed", result[feed_id][0])
             feed_url = result[feed_id][0]
-            feed = self.parse_feed(feed_url)
+            feed_type = result[feed_id][2]
+            feed = self.parse_feed(feed_url, feed_type)
             if feed:
-                if hasattr(feed, "status"):
+                if hasattr(feed, "status") and feed_type != "md":
                     if feed.status == 429:
                         retry = QMessageBox.warning(self, 'Too Many Requests', f'You have made too many requests to {result[feed_id][1]}. Please try again later.', QMessageBox.Retry | QMessageBox.Cancel)
                         if retry == QMessageBox.Retry:
                             self.refresh_feed(feed_id)
                         return
-                self.display_feed(feed, result[feed_id][1])
+                self.display_feed(feed, result[feed_id][1], feed_type)
 
-    def display_feed(self, feed, title):
+    def display_feed(self, feed, title, type):
         if not feed or not title:
             QMessageBox.critical(self, 'Critical Error', 'Failed while refreshing: Feed or Title were set to None')
             return
-        self.feed_list_label.setText(title)
-        self.feed_list.setRowCount(len(feed.entries))
-        for i, entry in enumerate(feed.entries):
-            title_item = QTableWidgetItem(entry.title)
-            self.feed_list.setItem(i, 0, title_item)
-            url_item = QTableWidgetItem(entry.link)
-            self.feed_list.setItem(i, 1, url_item)
-            summary_item = QTableWidgetItem(entry.summary if entry.summary is not None else "No summary available")
-            self.feed_list.setItem(i, 2, summary_item)
-            timestamp = time.mktime(entry.published_parsed)
-            local_time = time.localtime(timestamp)
-            time_item = QTableWidgetItem(time.strftime("%Y-%m-%d at %H:%M:%S", local_time))
-            self.feed_list.setItem(i, 3, time_item)
 
-        if self.article_details_pane in self.splitter.children():
-            self.article_details_pane.setParent(None)
+        self.feed_label.setText(title)
+
+        if type == "rss":
+            if self.md_feed_display.isVisible():
+                self.md_feed_display.hide()
+            if not self.splitter.isVisible():
+                self.splitter.show()
+
+            self.rss_feed_table.setRowCount(len(feed.entries))
+            for i, entry in enumerate(feed.entries):
+                title_item = QTableWidgetItem(entry.title)
+                self.rss_feed_table.setItem(i, 0, title_item)
+                url_item = QTableWidgetItem(entry.link)
+                self.rss_feed_table.setItem(i, 1, url_item)
+                summary_item = QTableWidgetItem(entry.summary if entry.summary is not None else "No summary available")
+                self.rss_feed_table.setItem(i, 2, summary_item)
+                timestamp = time.mktime(entry.published_parsed)
+                local_time = time.localtime(timestamp)
+                time_item = QTableWidgetItem(time.strftime("%Y-%m-%d at %H:%M:%S", local_time))
+                self.rss_feed_table.setItem(i, 3, time_item)
+
+            if self.article_details_pane in self.splitter.children():
+                self.article_details_pane.setParent(None)
+
+        elif type == "md":
+            if self.splitter.isVisible():
+                self.splitter.hide()
+            if not self.md_feed_display.isVisible():
+                self.md_feed_display.show()
+
+            self.md_feed_display.setMarkdown(feed)
+            self.md_feed_display.verticalScrollBar().setValue(self.md_feed_display.verticalScrollBar().maximum())
+
 
     def change_feed(self, feed_id):
         self.feed_index = feed_id
@@ -486,11 +593,11 @@ class Feedstream(QMainWindow, StylesheetMixin):
         self.feed_menu.addAction(refresh_action)
 
     def open_url(self, row):
-        url = self.feed_list.item(row, 1).text()
+        url = self.rss_feed_table.item(row, 1).text()
         webbrowser.open(url)
 
     def hide_column(self, column, action, setting: str=None):
-        self.feed_list.setColumnHidden(column, not action.isChecked())
+        self.rss_feed_table.setColumnHidden(column, not action.isChecked())
         if setting:
             self.settings.set('TableView', setting, action.isChecked())
             print(f"Set '{setting}' to {action.isChecked()}")
@@ -585,7 +692,7 @@ class Feedstream(QMainWindow, StylesheetMixin):
         settings.commit()
         return settings
 
-    def parse_feed(self, url):
+    def parse_feed(self, url, type):
         use_proxy = self.settings.getboolean('proxy', 'use_proxy', fallback=False)
         http_address = self.settings.get('proxy', 'http_proxy_address', fallback="")
         http_port = self.settings.get('proxy', 'http_proxy_port', fallback="")
@@ -595,7 +702,6 @@ class Feedstream(QMainWindow, StylesheetMixin):
         proxies = None
         if use_proxy and http_address and http_port:
             http_proxy = f"http://{http_address}:{http_port}"
-            # Use HTTPS proxy if both address and port are provided; otherwise, fall back to HTTP proxy.
             if https_address and https_port:
                 https_proxy = f"http://{https_address}:{https_port}"
             else:
@@ -607,7 +713,6 @@ class Feedstream(QMainWindow, StylesheetMixin):
                 'https': https_proxy
             }
 
-        # Set a custom User-Agent header to mimic a browser.
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                           '(KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36'
@@ -616,10 +721,15 @@ class Feedstream(QMainWindow, StylesheetMixin):
         try:
             response = requests.get(url, headers=headers, proxies=proxies, timeout=10)
             response.raise_for_status()
-            return feedparser.parse(response.text)
+
+            if type == "md":
+                return response.text
+
+            else:
+                return feedparser.parse(response.text)
+
         except requests.RequestException as e:
-            # If it's a 403 error (or another issue) with the requests method, fall back.
-            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
+            if type == "rss" and hasattr(e, 'response') and e.response is not None and e.response.status_code == 403:
                 print("Received 403 error using requests; falling back to feedparser's native URL fetching.")
                 return feedparser.parse(url)
             else:
@@ -643,6 +753,9 @@ class Feedstream(QMainWindow, StylesheetMixin):
         self.settings.set('proxy', 'use_proxy', enabled)
         self.use_proxy_checkable.setChecked(enabled)
         self.settings.commit()
+
+    def open_link(self, url):
+        webbrowser.open_new_tab(url.toString())
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

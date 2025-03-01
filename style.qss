@@ -274,3 +274,20 @@ QTableView::item:selected {
     background-color: #0c0c0c;
     color: white;
 }
+
+/* Markdown Feeds */
+QTextBrowser {
+    font-family: "Arial";
+    font-size: 14px;
+    color: black;
+}
+
+QTextBrowser a {
+    color: blue; /* Default link color */
+    text-decoration: underline;
+}
+
+QTextBrowser a:hover {
+    color: darkblue;
+    text-decoration: underline;
+}
